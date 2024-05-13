@@ -23,24 +23,40 @@ void check_cuda(cudaError_t result, char const* const func, const char* const fi
     }
 }
 
-__device__ float hit_sphere(const vec3& center, float radius, const ray& r) {
-    vec3 oc = r.origin() - center;
-    float a = dot(r.direction(), r.direction());
-    float b = 2.0f * dot(r.direction(), oc);
-    float c = dot(oc, oc) - radius * radius;
-    float discriminant = b * b - 4.0f * a * c;
-    if (discriminant < 0) return -1.0f;
-    else return ( ( - b - sqrt(discriminant)) / (2.0f * a) );
+#define RANDVEC3 vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),curand_uniform(local_rand_state))
+
+__device__ vec3 random_in_unit_sphere(curandState* local_rand_state) {
+    vec3 p;
+    do {
+        p = 2.0f * RANDVEC3 - vec3(1, 1, 1);
+    } while (p.length_squared() >= 1.0f);
+    return p;
 }
 
-__device__ vec3 color(const ray& r, hittable **d_world) {
-    hit_record rec;
-    if ((*d_world)->hit(r, 0.0, FLT_MAX, rec)) {
-        return 0.5f * vec3(rec.normal.x() + 1.0f, rec.normal.y() + 1.0f, rec.normal.z() + 1.0f);
+
+// Turning the followin recursive code to itereative with a limit of 50
+__device__ vec3 color(const ray& r, hittable **d_world, curandState* local_rand_state) {
+    ray curr_ray = r;
+    float cur_attenuation = 1.0f;
+
+    for (int i{ 1 }; i <= 50; i++) {
+        hit_record rec;
+        // Diffusion with attenuation 0.5
+        // shadow acne removal by making t_min as 0.001
+        if ((*d_world)->hit(curr_ray, 0.001f, FLT_MAX, rec)) {
+            vec3 target = rec.p + rec.normal + random_in_unit_sphere(local_rand_state);
+            cur_attenuation *= 0.5f;
+            curr_ray = ray(rec.p, target - rec.p);
+        }
+        else {
+            vec3 unit_direction = unit_vector(curr_ray.direction());
+            float t = 0.5f * (unit_direction.y() + 1.0f);
+            vec3 c = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.6, 1.0);
+            return cur_attenuation * c;
+        }
     }
-    vec3 unit_direction = unit_vector(r.direction());
-    float a = 0.5f * (unit_direction.y() + 1.0f);   //Writing f required as doube precision is default
-    return (1.0f - a) * vec3(1.0, 1.0, 1.0) + a * vec3(0.3, 0.3, 1.0);
+
+    return vec3(0.0, 0.0, 0.0); //exceeeds recursion limit
 }   
 
 __global__ void render_init(int max_x, int max_y, curandState* rand_state) {
@@ -67,17 +83,26 @@ __global__ void render(vec3* fb, int max_x, int max_y, int samples_per_pix,
         float u = float(i + curand_uniform(&local_rand_state)) / float(max_x);
         float v = float(j + curand_uniform(&local_rand_state)) / float(max_y);
         ray r = (*cam)->get_ray(u, v);
-        col += color(r, d_world);
+        col += color(r, d_world, &local_rand_state);
     }
-    fb[pixel_index] = col / float(samples_per_pix);
+    rand_state[pixel_index] = local_rand_state;
+    col /= float(samples_per_pix);
+
+    // Gamma correction
+    col[0] = sqrt(col[0]);
+    col[1] = sqrt(col[1]);
+    col[2] = sqrt(col[2]);
+
+    fb[pixel_index] = col;
 }
 
 __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         *(d_list) = new sphere(vec3(0, 0, -2), 0.5);
-        *(d_list + 1) = new sphere(vec3(0, -100.5, -2), 100);
-        *(d_list + 2) = new sphere(vec3(-2, 0, -3), 0.5);
-        *(d_world) = new hittable_list(d_list, 3);
+        *(d_list + 1) = new sphere(vec3(1.8, 0, -3), 0.5);
+        *(d_list + 2) = new sphere(vec3(-1.2, 0, -2), 0.5);
+        *(d_list + 3) = new sphere(vec3(0, -100.5, -2), 100);
+        *(d_world) = new hittable_list(d_list, 4);
         *d_camera = new camera();
     }
 }
@@ -86,6 +111,7 @@ __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_cam
     delete* (d_list);
     delete* (d_list + 1);
     delete* (d_list + 2);
+    delete* (d_list + 3);
     delete* d_world;
     delete* d_camera;
 }
@@ -115,7 +141,7 @@ int main() {
 
     // make our world of hittables and camera
     hittable** d_list;  // d prefix for device only
-    checkCudaErrors(cudaMalloc((void**)&d_list, 3 * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc((void**)&d_list, 4 * sizeof(hittable*)));
 
     hittable** d_world;
     checkCudaErrors(cudaMalloc((void**)&d_world, sizeof(hittable*)));
@@ -134,6 +160,9 @@ int main() {
     // Render our buffer
     dim3 blocks(image_width / tx + 1, image_height / ty + 1);
     dim3 threads(tx, ty);
+    render_init << <blocks, threads >> > (image_width, image_height, d_rand_state);
+    checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaDeviceSynchronize());
     render << <blocks, threads >> > (fb, image_width, image_height, 
                                     samples_per_pix,
                                     d_camera,
