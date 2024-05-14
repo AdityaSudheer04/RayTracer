@@ -6,5 +6,10 @@
   <ItemGroup>
     <ClInclude Include="vec3.h" />
     <ClInclude Include="ray.h" />
+    <ClInclude Include="camera.h" />
+    <ClInclude Include="hittable.h" />
+    <ClInclude Include="hittable_list.h" />
+    <ClInclude Include="sphere.h" />
+    <ClInclude Include="material.h" />
   </ItemGroup>
 </Project>

@@ -6,8 +6,8 @@
 
 class sphere : public hittable {
 public:
-    __device__ sphere(const point3& center, float radius) 
-        : center{center}, radius{radius} {
+    __device__ sphere(const point3& center, float radius, material* mat) 
+        : center{ center }, radius{ radius }, mat_ptr{mat} {
 
     }
 
@@ -43,9 +43,11 @@ public:
         rec.p = r.at(rec.t);
         vec3 outward_normal = (rec.p - center) / radius;
         rec.set_face_normal(r, outward_normal);
+        rec.mat_ptr = mat_ptr;
         
         return true;
     }
+    material* mat_ptr;
 private:
     point3 center;
     float radius;

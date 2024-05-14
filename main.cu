@@ -9,6 +9,7 @@
 #include "sphere.h"
 #include "hittable_list.h"
 #include "camera.h"
+#include "material.h"
 
 // limited version of checkCudaErrors from helper_cuda.h in CUDA examples
 #define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
@@ -23,30 +24,26 @@ void check_cuda(cudaError_t result, char const* const func, const char* const fi
     }
 }
 
-#define RANDVEC3 vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),curand_uniform(local_rand_state))
-
-__device__ vec3 random_in_unit_sphere(curandState* local_rand_state) {
-    vec3 p;
-    do {
-        p = 2.0f * RANDVEC3 - vec3(1, 1, 1);
-    } while (p.length_squared() >= 1.0f);
-    return p;
-}
-
 
 // Turning the followin recursive code to itereative with a limit of 50
 __device__ vec3 color(const ray& r, hittable **d_world, curandState* local_rand_state) {
     ray curr_ray = r;
-    float cur_attenuation = 1.0f;
+    vec3 cur_attenuation = vec3(1.0, 1.0, 1.0);
 
     for (int i{ 1 }; i <= 50; i++) {
         hit_record rec;
         // Diffusion with attenuation 0.5
         // shadow acne removal by making t_min as 0.001
         if ((*d_world)->hit(curr_ray, 0.001f, FLT_MAX, rec)) {
-            vec3 target = rec.p + rec.normal + random_in_unit_sphere(local_rand_state);
-            cur_attenuation *= 0.5f;
-            curr_ray = ray(rec.p, target - rec.p);
+            ray scattered;
+            vec3 attenuation;
+            if (rec.mat_ptr->scatter(curr_ray, rec, attenuation, scattered, local_rand_state)) {
+                cur_attenuation = cur_attenuation * attenuation;
+                curr_ray = scattered;
+            }
+            else {
+                return vec3(0.0, 0.0, 0.0);
+            }
         }
         else {
             vec3 unit_direction = unit_vector(curr_ray.direction());
@@ -98,20 +95,24 @@ __global__ void render(vec3* fb, int max_x, int max_y, int samples_per_pix,
 
 __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        *(d_list) = new sphere(vec3(0, 0, -2), 0.5);
-        *(d_list + 1) = new sphere(vec3(1.8, 0, -3), 0.5);
-        *(d_list + 2) = new sphere(vec3(-1.2, 0, -2), 0.5);
-        *(d_list + 3) = new sphere(vec3(0, -100.5, -2), 100);
+        d_list[0] = new sphere(vec3(0, 0, -1), 0.5,
+                               new lambertian(vec3(0.8, 0.3, 0.3)));
+        d_list[1] = new sphere(vec3(0, -100.5, -1), 100,
+                               new lambertian(vec3(0.8, 0.8, 0.0)));
+        d_list[2] = new sphere(vec3(1, 0, -1), 0.5,
+                               new metal(vec3(0.8, 0.6, 0.2), 1.0));
+        d_list[3] = new sphere(vec3(-1, 0, -1), 0.5,
+                               new metal(vec3(0.8, 0.8, 0.8), 0.3));
         *(d_world) = new hittable_list(d_list, 4);
         *d_camera = new camera();
     }
 }
 
 __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_camera) {
-    delete* (d_list);
-    delete* (d_list + 1);
-    delete* (d_list + 2);
-    delete* (d_list + 3);
+    for (int i{ 0 }; i < 4; i++) {
+        delete ((sphere*)d_list[i])->mat_ptr;
+        delete d_list[i];
+    }
     delete* d_world;
     delete* d_camera;
 }
