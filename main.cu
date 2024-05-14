@@ -93,21 +93,26 @@ __global__ void render(vec3* fb, int max_x, int max_y, int samples_per_pix,
     fb[pixel_index] = col;
 }
 
-__global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera) {
+__global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera, int image_width,
+                                int image_height) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        d_list[0] = new sphere(vec3(0, 0, -2), 0.5,
-                               new lambertian(vec3(0.8, 0.3, 0.3)));
-        d_list[1] = new sphere(vec3(0, -100.5, -2), 100,
-                               new lambertian(vec3(0.8, 0.8, 0.0)));
-        d_list[2] = new sphere(vec3(2.5, 0, -2.5), 0.5,
-                               new metal(vec3(0.8, 0.6, 0.2), 1.0));
-        d_list[3] = new sphere(vec3(-1, 0, -2), 0.5,
-                               new dielectric(1.5f / 1.33f));
-        d_list[4] = new sphere(vec3(1, 0, -1.6), 0.5,
-                               new dielectric(1.0f / 1.33f));
+        d_list[0] = new sphere(vec3(0, 0, -1), 0.5,
+                                new lambertian(vec3(0.1, 0.2, 0.5)));
+        d_list[1] = new sphere(vec3(0, -100.5, -1), 100,
+                                new lambertian(vec3(0.8, 0.8, 0.0)));
+        d_list[2] = new sphere(vec3(1, 0, -1), 0.5,
+                                new metal(vec3(0.8, 0.6, 0.2), 0.0));
+        d_list[3] = new sphere(vec3(-1, 0, -1), 0.5,
+                                new dielectric(1.5));
+        d_list[4] = new sphere(vec3(-1, 0, -1), -0.45,
+                                new dielectric(1.5));
 
         *(d_world) = new hittable_list(d_list, 5);
-        *d_camera = new camera();
+        *d_camera = new camera( vec3(-5, 6, 2),
+                                vec3(0, 0, -1),
+                                vec3(0, 1, 0),
+                                20.0,
+                                float(image_width) / float(image_height));
     }
 }
 
@@ -153,7 +158,7 @@ int main() {
     camera** d_camera;
     checkCudaErrors(cudaMalloc((void**)&d_camera, sizeof(camera*)));
 
-    create_world << <1, 1 >> > (d_list, d_world, d_camera);
+    create_world << <1, 1 >> > (d_list, d_world, d_camera, image_width, image_height);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
