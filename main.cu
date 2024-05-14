@@ -95,21 +95,24 @@ __global__ void render(vec3* fb, int max_x, int max_y, int samples_per_pix,
 
 __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        d_list[0] = new sphere(vec3(0, 0, -1), 0.5,
+        d_list[0] = new sphere(vec3(0, 0, -2), 0.5,
                                new lambertian(vec3(0.8, 0.3, 0.3)));
-        d_list[1] = new sphere(vec3(0, -100.5, -1), 100,
+        d_list[1] = new sphere(vec3(0, -100.5, -2), 100,
                                new lambertian(vec3(0.8, 0.8, 0.0)));
-        d_list[2] = new sphere(vec3(1, 0, -1), 0.5,
+        d_list[2] = new sphere(vec3(2.5, 0, -2.5), 0.5,
                                new metal(vec3(0.8, 0.6, 0.2), 1.0));
-        d_list[3] = new sphere(vec3(-1, 0, -1), 0.5,
-                               new metal(vec3(0.8, 0.8, 0.8), 0.3));
-        *(d_world) = new hittable_list(d_list, 4);
+        d_list[3] = new sphere(vec3(-1, 0, -2), 0.5,
+                               new dielectric(1.5f / 1.33f));
+        d_list[4] = new sphere(vec3(1, 0, -1.6), 0.5,
+                               new dielectric(1.0f / 1.33f));
+
+        *(d_world) = new hittable_list(d_list, 5);
         *d_camera = new camera();
     }
 }
 
 __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_camera) {
-    for (int i{ 0 }; i < 4; i++) {
+    for (int i{ 0 }; i < 5; i++) {
         delete ((sphere*)d_list[i])->mat_ptr;
         delete d_list[i];
     }
@@ -142,7 +145,7 @@ int main() {
 
     // make our world of hittables and camera
     hittable** d_list;  // d prefix for device only
-    checkCudaErrors(cudaMalloc((void**)&d_list, 4 * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc((void**)&d_list, 5 * sizeof(hittable*)));
 
     hittable** d_world;
     checkCudaErrors(cudaMalloc((void**)&d_world, sizeof(hittable*)));
